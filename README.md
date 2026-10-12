@@ -135,3 +135,9 @@ its average.
 - `COIN-FUTURES` symbols tried (`BTCUSD`, `ETHUSD`) were rejected by the v2 endpoint
   (code 30001); only `USDT-FUTURES` and `SPOT` are verified.
 - Feed.S has no stream for open interest or liquidations, which Bitget also publishes.
+
+## CI
+
+CI installs the pinned siblings and the opam dependencies through the shared
+[ox-setup](https://github.com/winterchill-trading/infra/blob/main/docs/ci.md) action, which
+caches the built opam switch between runs.
