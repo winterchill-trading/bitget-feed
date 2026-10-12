@@ -20,6 +20,7 @@ depends: [
   "yojson"
   "uri"
   "async_websocket" {with-test}
+  "core_bench" {with-test}
   "odoc" {with-doc}
 ]
 build: [

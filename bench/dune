@@ -1,0 +1,25 @@
+(executable
+ (name main)
+ (libraries core core_unix.command_unix core_bench bitget-feed)
+ (preprocess
+  (pps ppx_jane)))
+
+; The recorded minute from test/fixtures, embedded as strings.
+
+(rule
+ (target frames.ml)
+ (deps
+  (glob_files ../test/fixtures/bitget-BTCUSDT-2026-10-12T16-54/*.ndjson))
+ (action
+  (with-stdout-to
+   frames.ml
+   (progn
+    (echo "let trades = {json|")
+    (cat ../test/fixtures/bitget-BTCUSDT-2026-10-12T16-54/trades.ndjson)
+    (echo "|json}\nlet bbo = {json|")
+    (cat ../test/fixtures/bitget-BTCUSDT-2026-10-12T16-54/bbo.ndjson)
+    (echo "|json}\nlet l2 = {json|")
+    (cat ../test/fixtures/bitget-BTCUSDT-2026-10-12T16-54/l2.ndjson)
+    (echo "|json}\nlet funding = {json|")
+    (cat ../test/fixtures/bitget-BTCUSDT-2026-10-12T16-54/funding.ndjson)
+    (echo "|json}\n")))))

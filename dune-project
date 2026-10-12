@@ -30,4 +30,5 @@
   ppx_yojson_conv
   yojson
   uri
-  (async_websocket :with-test)))
+  (async_websocket :with-test)
+  (core_bench :with-test)))
