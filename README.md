@@ -10,9 +10,16 @@ stack (Core, Async).
 - `Bitget_feed.Wire`: yojson types for pushes, acks and errors.
 - `Bitget_feed.Normalizer`: pure frame -> events conversion, with a `Local_book` per
   `books` subscription for `seq`/`pseq` continuity (and the checksum, when sent).
-- `Bitget_feed.Live_feed.create ?on_raw config ~symbols ~streams`: one socket per stream
-  via [venue-net](https://github.com/winterchill-trading/venue-net), text `ping` every
-  30 s, reconnect with resubscribe, unsubscribe/subscribe of a book that loses sync.
+- `Bitget_feed.Live_feed.create ?on_raw ?time_source config ~symbols ~streams`: one
+  socket per stream via [venue-net](https://github.com/winterchill-trading/venue-net),
+  text `ping` every 30 s, reconnect with resubscribe, unsubscribe/subscribe of a book that
+  loses sync. `time_source` (default the wall clock) stamps `recv_ts` and drives the
+  keepalive and reconnect delays, so tests can step them with a synthetic clock.
+  `create_with_stats` also returns a function reading `Live_feed.Stats.t`: frames,
+  parse errors, `error` events and reconnects.
+- `Bitget_feed.Raw_normalizer`: the normalizer as a `Market_data.Normalizer.S`, for
+  rebuilding event logs from market-recorder raw files:
+  `Market_data.Rebuild_norm.command [ (module Bitget_feed.Raw_normalizer) ]`.
 
 The wire protocol notes, with captured frames, are in
 [docs/bitget-ws-spec.md](docs/bitget-ws-spec.md).
@@ -83,6 +90,28 @@ $ bitget-feed feed -symbol BTCUSDT -streams l2 -count 1
 
 In ten-second runs per stream: 500 trades (50 of them the subscribe backlog), 775 bbo
 updates, 1 snapshot plus 99 deltas on l2, 180 funding records.
+
+## Tests and benchmarks
+
+`test/fixtures/bitget-BTCUSDT-2026-10-12T16-54` holds a trimmed mainnet minute in the
+market-recorder raw format (`<recv_ts> <frame>` per line, one file per stream, 230 KB).
+Tests decode and normalize every frame, run `rebuild-norm` over it into a temporary
+directory and read the event logs back, and pin the minor words allocated per message.
+Live feed tests run against a loopback Bitget-like websocket server, one of them on a
+synthetic clock.
+
+`dune exec bench/main.exe` times `Normalizer.frame` per recorded frame (Apple M-series,
+`-quota 3`):
+
+| Stream | Frames | Bytes/frame | Time/frame | Minor words/frame |
+|---|---|---|---|---|
+| trades | 150 | 383 | 4.2 us | 751 |
+| bbo | 200 | 230 | 2.8 us | 565 |
+| l2 | 40 | 2022 | 60.6 us | 15447 |
+| funding | 60 | 581 | 5.4 us | 776 |
+
+The l2 cycle includes the 20 KB full-depth snapshot sent on subscribe, which dominates
+its average.
 
 ## Symbol conventions
 
