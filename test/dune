@@ -3,6 +3,6 @@
  (inline_tests
   (flags
    (:standard -source-tree-root .)))
- (libraries core bitget-feed market-data)
+ (libraries core async async_websocket bitget-feed market-data yojson uri)
  (preprocess
   (pps ppx_jane)))
