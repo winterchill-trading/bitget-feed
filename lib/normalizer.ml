@@ -169,7 +169,12 @@ let push t ~recv_ts (push : Wire.Push.t) : Output.t Or_error.t =
   match push.arg.channel with
   | "trade" ->
     let%map.Or_error trades = Wire.trades push in
-    Output.events (List.map trades ~f:(trade ~recv_ts ~inst_id:push.arg.inst_id))
+    (* Bitget lists trades newest first; emit them oldest first. *)
+    List.rev trades
+    |> List.stable_sort ~compare:(fun (a : Wire.Trade.t) b ->
+      Int.compare (Int.of_string a.ts) (Int.of_string b.ts))
+    |> List.map ~f:(trade ~recv_ts ~inst_id:push.arg.inst_id)
+    |> Output.events
   | "ticker" ->
     let%map.Or_error tickers = Wire.tickers push in
     Output.events (List.concat_map tickers ~f:(funding t ~recv_ts))

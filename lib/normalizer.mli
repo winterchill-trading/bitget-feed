@@ -2,7 +2,8 @@
     driver is {!Live_feed}.
 
     - [trade] pushes give one {!Market_data.Trade.t} per element ([exch_ts] = trade [ts],
-      side = taker side). The snapshot of recent trades sent on subscribe is emitted too.
+      side = taker side), oldest first within a push. The snapshot of recent trades sent
+      on subscribe is emitted too.
     - [books1] pushes give a {!Market_data.Bbo.t} ([exch_ts] = book [ts]).
     - [books] pushes go through a {!Local_book} per subscription and become
       {!Market_data.L2_update.t} snapshots and deltas. A [pseq] that does not continue the

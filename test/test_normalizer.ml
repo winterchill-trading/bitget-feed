@@ -76,11 +76,11 @@ let%expect_test "trades" =
   [%expect
     {|
     (Trade
-     ((instrument bitget:BTCUSDT) (exch_ms 1791808977156) (price 82776.4)
-      (size 0.0593) (side Buy) (trade_id 1493520588124995586)))
-    (Trade
      ((instrument bitget:BTCUSDT) (exch_ms 1791808976000) (price 82770)
       (size 1.5) (side Sell) (trade_id 1493520588124995584)))
+    (Trade
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808977156) (price 82776.4)
+      (size 0.0593) (side Buy) (trade_id 1493520588124995586)))
     (Trade
      ((instrument bitget:BTCUSDT) (exch_ms 1791808977646) (price 82776.4)
       (size 0.023) (side Buy) (trade_id 1493520590180204544)))
