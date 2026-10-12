@@ -16,7 +16,9 @@ stack (Core, Async).
   loses sync. `time_source` (default the wall clock) stamps `recv_ts` and drives the
   keepalive and reconnect delays, so tests can step them with a synthetic clock.
   `create_with_stats` also returns a function reading `Live_feed.Stats.t`: frames,
-  parse errors, `error` events and reconnects.
+  parse errors, `error` events and reconnects. `Live_feed.connect` returns a handle with
+  `feed`, `stats` and `feed_with_gaps`, a `Market_data.Feed.With_gaps.t` whose `gaps`
+  pipe reports reconnects and book resyncs (see below).
 - `Bitget_feed.Raw_normalizer`: the normalizer as a `Market_data.Normalizer.S`, for
   rebuilding event logs from market-recorder raw files:
   `Market_data.Rebuild_norm.command [ (module Bitget_feed.Raw_normalizer) ]`.
@@ -36,6 +38,37 @@ The wire protocol notes, with captured frames, are in
 
 Verified on `USDT-FUTURES` (`BTCUSDT`, `ETHUSDT`); `SPOT` `BTCUSDT` also works for
 trades, bbo and l2 (spot tickers carry no funding, so the funding stream stays empty).
+
+## Gaps and reconnects
+
+`Live_feed.feed_with_gaps` reports every break as a `Market_data.Gap.t` with reason
+`Resync`, `venue = Bitget` and the stream set:
+
+- a reconnect of a stream's socket: `instrument = None` (every symbol on that socket),
+  written before the first frame of the new connection is handled;
+- a `books` sequence break (`pseq` not the previous `seq`) or checksum mismatch:
+  `instrument` set, written before the unsubscribe/subscribe that brings the next
+  snapshot.
+
+What a reconnect loses on this venue:
+
+- Everything the server sends while the socket is down. A closed socket is retried after
+  0.5 s with 20% jitter (`test/test_gaps_fake_clock.ml` and
+  `test/test_reconnect_fake_clock.ml` measure a backoff between 400 and 600 ms on the
+  synthetic clock), doubling on failed attempts. A socket that stays open but silent is
+  only noticed after two 30 s ping intervals, so up to 60 s of data.
+- `trades`: Bitget resends the last 50 trades on subscribe, so an outage with at most 50
+  prints loses nothing once consumers de-duplicate by `trade_id`; longer outages lose the
+  older prints.
+- `l2`: the book restarts from the snapshot sent on subscribe; deltas in between are
+  lost, and the gap tells consumers to drop derived state until that snapshot.
+- `bbo` and `funding`: updates in between are lost; the first push after subscribing is
+  a full state again (`books1` is a snapshot, `ticker` a full ticker).
+
+In the test, a book break on connection 1 and a dropped trades socket yield exactly two
+gaps (`L2` for `bitget:BTCUSDT` at the break's `recv_ts`, then `Trades` with no
+instrument at epoch + backoff), and the first data frame after each one sees it already
+written.
 
 ## Usage
 
@@ -97,8 +130,8 @@ updates, 1 snapshot plus 99 deltas on l2, 180 funding records.
 market-recorder raw format (`<recv_ts> <frame>` per line, one file per stream, 230 KB).
 Tests decode and normalize every frame, run `rebuild-norm` over it into a temporary
 directory and read the event logs back, and pin the minor words allocated per message.
-Live feed tests run against a loopback Bitget-like websocket server, one of them on a
-synthetic clock.
+Live feed tests run against a loopback Bitget-like websocket server, two of them on a
+synthetic clock (reconnect backoff, and gaps on a resync and a reconnect).
 
 `dune exec bench/main.exe` times `Normalizer.frame` per recorded frame (Apple M-series,
 `-quota 3`):
