@@ -101,8 +101,8 @@ updates, 1 snapshot plus 99 deltas on l2, 180 funding records.
   bid/ask but is slower (~100 ms) and is used only for funding.
 - `books` deltas are passed through as received; the local book only checks continuity.
   The live channel currently sends no `checksum`; the feed verifies it only when present.
-- Funding `exch_ts` is the ticker's `ts`; `rate` is per funding interval (8 h for
-  BTCUSDT). Bitget sends no separate funding event at settlement.
+- Funding `exch_ts` is the ticker's `ts`; `rate` is per funding interval, as
+  sent. Bitget sends no separate funding event at settlement.
 - `COIN-FUTURES` symbols tried (`BTCUSD`, `ETHUSD`) were rejected by the v2 endpoint
   (code 30001); only `USDT-FUTURES` and `SPOT` are verified.
 - Feed.S has no stream for open interest or liquidations, which Bitget also publishes.
