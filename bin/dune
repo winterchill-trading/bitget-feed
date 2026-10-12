@@ -1,0 +1,7 @@
+(executable
+ (name bitget_feed_cli)
+ (public_name bitget-feed)
+ (package bitget-feed)
+ (libraries core core_unix.command_unix async bitget-feed market-data uri)
+ (preprocess
+  (pps ppx_jane)))
