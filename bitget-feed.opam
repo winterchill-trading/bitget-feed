@@ -19,6 +19,7 @@ depends: [
   "ppx_yojson_conv"
   "yojson"
   "uri"
+  "async_websocket" {with-test}
   "odoc" {with-doc}
 ]
 build: [
