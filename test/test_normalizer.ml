@@ -140,3 +140,156 @@ let%expect_test "spot ticker without funding fields gives nothing" =
     {|{"action":"snapshot","arg":{"instType":"SPOT","channel":"ticker","instId":"BTCUSDT"},"data":[{"instId":"BTCUSDT","lastPr":"82783.4","bidPr":"82783.3","askPr":"82783.4","bidSz":"1","askSz":"2","ts":"1791808980589"}],"ts":1791808980597}|};
   [%expect {| |}]
 ;;
+
+let books ?checksum ~action ~bids ~asks ~seq ~pseq () =
+  let side levels =
+    String.concat
+      ~sep:","
+      (List.map levels ~f:(fun (px, sz) -> sprintf {|["%s","%s"]|} px sz))
+  in
+  let checksum =
+    Option.value_map checksum ~default:"" ~f:(fun c -> sprintf {|,"checksum":%d|} c)
+  in
+  sprintf
+    {|{"action":"%s","arg":{"instType":"USDT-FUTURES","channel":"books","instId":"BTCUSDT"},"data":[{"asks":[%s],"bids":[%s],"ts":"%d","seq":%d,"pseq":%d%s}],"ts":%d}|}
+    action
+    (side asks)
+    (side bids)
+    (1791808998000 + seq)
+    seq
+    pseq
+    checksum
+    (1791808998001 + seq)
+;;
+
+let%expect_test "books: update before snapshot, snapshot, deltas, gap, resync" =
+  let t = Normalizer.create () in
+  print_endline "-- update before any snapshot is dropped";
+  feed t (books ~action:"update" ~bids:[ "99", "1" ] ~asks:[] ~seq:5 ~pseq:4 ());
+  print_endline "-- snapshot";
+  feed
+    t
+    (books
+       ~action:"snapshot"
+       ~bids:[ "100", "1"; "99.5", "2" ]
+       ~asks:[ "100.5", "3"; "101", "4" ]
+       ~seq:10
+       ~pseq:0
+       ());
+  print_endline "-- delta continuing seq";
+  feed
+    t
+    (books
+       ~action:"update"
+       ~bids:[ "100", "0"; "99.8", "5" ]
+       ~asks:[]
+       ~seq:12
+       ~pseq:10
+       ());
+  print_endline "-- gap: pseq 13 after seq 12";
+  feed t (books ~action:"update" ~bids:[] ~asks:[ "100.5", "0" ] ~seq:15 ~pseq:13 ());
+  print_endline "-- later update while out of sync is dropped";
+  feed t (books ~action:"update" ~bids:[] ~asks:[ "100.5", "1" ] ~seq:16 ~pseq:15 ());
+  print_endline "-- fresh snapshot after resubscribe";
+  feed
+    t
+    (books
+       ~action:"snapshot"
+       ~bids:[ "99.8", "5" ]
+       ~asks:[ "101", "4" ]
+       ~seq:20
+       ~pseq:0
+       ());
+  feed t (books ~action:"update" ~bids:[ "99.9", "1" ] ~asks:[] ~seq:21 ~pseq:20 ());
+  [%expect
+    {|
+    -- update before any snapshot is dropped
+    -- snapshot
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998010) (kind Snapshot)
+      (bids ((100 1) (99.5 2))) (asks ((100.5 3) (101 4)))))
+    -- delta continuing seq
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998012) (kind Delta)
+      (bids ((100 0) (99.8 5))) (asks ())))
+    -- gap: pseq 13 after seq 12
+    (resubscribe (arg USDT-FUTURES/books/BTCUSDT))
+    -- later update while out of sync is dropped
+    -- fresh snapshot after resubscribe
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998020) (kind Snapshot)
+      (bids ((99.8 5))) (asks ((101 4)))))
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998021) (kind Delta)
+      (bids ((99.9 1))) (asks ())))
+    |}]
+;;
+
+let%expect_test "books: checksum verified when present" =
+  let t = Normalizer.create () in
+  let bids = [ "100", "1" ]
+  and asks = [ "100.5", "3" ] in
+  let good = Checksum.compute ~bids ~asks () in
+  feed t (books ~action:"snapshot" ~bids ~asks ~seq:1 ~pseq:0 ~checksum:good ());
+  let after = Checksum.compute ~bids:[ "100", "2" ] ~asks () in
+  feed
+    t
+    (books
+       ~action:"update"
+       ~bids:[ "100", "2" ]
+       ~asks:[]
+       ~seq:2
+       ~pseq:1
+       ~checksum:after
+       ());
+  print_endline "-- wrong checksum";
+  feed
+    t
+    (books ~action:"update" ~bids:[ "100", "3" ] ~asks:[] ~seq:3 ~pseq:2 ~checksum:42 ());
+  print_endline "-- zero means absent";
+  feed t (books ~action:"snapshot" ~bids ~asks ~seq:4 ~pseq:0 ~checksum:0 ());
+  [%expect
+    {|
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998001) (kind Snapshot)
+      (bids ((100 1))) (asks ((100.5 3)))))
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998002) (kind Delta)
+      (bids ((100 2))) (asks ())))
+    -- wrong checksum
+    (resubscribe (arg USDT-FUTURES/books/BTCUSDT))
+    -- zero means absent
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998004) (kind Snapshot)
+      (bids ((100 1))) (asks ((100.5 3)))))
+    |}]
+;;
+
+let%expect_test "books: one book per subscription" =
+  let t = Normalizer.create () in
+  let eth frame =
+    String.substr_replace_all
+      frame
+      ~pattern:{|"instId":"BTCUSDT"|}
+      ~with_:{|"instId":"ETHUSDT"|}
+  in
+  feed t (books ~action:"snapshot" ~bids:[ "100", "1" ] ~asks:[] ~seq:10 ~pseq:0 ());
+  feed t (eth (books ~action:"snapshot" ~bids:[ "3", "1" ] ~asks:[] ~seq:50 ~pseq:0 ()));
+  feed t (books ~action:"update" ~bids:[ "100", "2" ] ~asks:[] ~seq:11 ~pseq:10 ());
+  feed t (eth (books ~action:"update" ~bids:[ "3", "2" ] ~asks:[] ~seq:51 ~pseq:50 ()));
+  [%expect
+    {|
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998010) (kind Snapshot)
+      (bids ((100 1))) (asks ())))
+    (L2
+     ((instrument bitget:ETHUSDT) (exch_ms 1791808998050) (kind Snapshot)
+      (bids ((3 1))) (asks ())))
+    (L2
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808998011) (kind Delta)
+      (bids ((100 2))) (asks ())))
+    (L2
+     ((instrument bitget:ETHUSDT) (exch_ms 1791808998051) (kind Delta)
+      (bids ((3 2))) (asks ())))
+    |}]
+;;
