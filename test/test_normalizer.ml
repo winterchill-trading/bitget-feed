@@ -86,3 +86,57 @@ let%expect_test "trades" =
       (size 0.023) (side Buy) (trade_id 1493520590180204544)))
     |}]
 ;;
+
+let%expect_test "books1 gives bbo" =
+  let t = Normalizer.create () in
+  feed
+    t
+    {|{"action":"snapshot","arg":{"instType":"USDT-FUTURES","channel":"books1","instId":"BTCUSDT"},"data":[{"asks":[["82807","1.0874"]],"bids":[["82806.9","4.1467"]],"ts":"1791808988865","seq":1091175574839,"pseq":0}],"ts":1791808988866}|};
+  (* one side empty: nothing *)
+  feed
+    t
+    {|{"action":"snapshot","arg":{"instType":"USDT-FUTURES","channel":"books1","instId":"BTCUSDT"},"data":[{"asks":[],"bids":[["82806.9","4.1467"]],"ts":"1791808988870","seq":1091175575227,"pseq":0}],"ts":1791808988871}|};
+  [%expect
+    {|
+    (Bbo
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808988865) (bid (82806.9 4.1467))
+      (ask (82807 1.0874))))
+    |}]
+;;
+
+let ticker ~rate ~mark ~ts =
+  sprintf
+    {|{"action":"snapshot","arg":{"instType":"USDT-FUTURES","channel":"ticker","instId":"BTCUSDT"},"data":[{"instId":"BTCUSDT","lastPr":"82783.4","bidPr":"82783.3","askPr":"82783.4","bidSz":"1.2888","askSz":"9.1689","fundingRate":"%s","nextFundingTime":"1791820800000","markPrice":"%s","indexPrice":"82805.9195","holdingAmount":"33502.9652000000073","symbolType":"1","symbol":"BTCUSDT","ts":"%d"}],"ts":%d}|}
+    rate
+    mark
+    ts
+    (ts + 8)
+;;
+
+let%expect_test "ticker gives funding only on change" =
+  let t = Normalizer.create () in
+  feed t (ticker ~rate:"0.0001" ~mark:"82783.4" ~ts:1791808980589);
+  feed t (ticker ~rate:"0.0001" ~mark:"82783.4" ~ts:1791808980693);
+  feed t (ticker ~rate:"0.0001" ~mark:"82790.1" ~ts:1791808980793);
+  feed t (ticker ~rate:"-0.00005" ~mark:"82790.1" ~ts:1791808980893);
+  [%expect
+    {|
+    (Funding
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808980589) (rate 0.0001)
+      (next_funding_ms 1791820800000) (mark 82783.4) (index 82805.9195)))
+    (Funding
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808980793) (rate 0.0001)
+      (next_funding_ms 1791820800000) (mark 82790.1) (index 82805.9195)))
+    (Funding
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808980893) (rate -5E-05)
+      (next_funding_ms 1791820800000) (mark 82790.1) (index 82805.9195)))
+    |}]
+;;
+
+let%expect_test "spot ticker without funding fields gives nothing" =
+  let t = Normalizer.create () in
+  feed
+    t
+    {|{"action":"snapshot","arg":{"instType":"SPOT","channel":"ticker","instId":"BTCUSDT"},"data":[{"instId":"BTCUSDT","lastPr":"82783.4","bidPr":"82783.3","askPr":"82783.4","bidSz":"1","askSz":"2","ts":"1791808980589"}],"ts":1791808980597}|};
+  [%expect {| |}]
+;;
