@@ -293,3 +293,60 @@ let%expect_test "books: one book per subscription" =
       (bids ((3 2))) (asks ())))
     |}]
 ;;
+
+(* Only whether it failed: ppx_yojson_conv errors embed source paths. *)
+let feed_result t frame =
+  match Normalizer.frame t ~recv_ts frame with
+  | Error _ -> print_endline "error"
+  | Ok output -> print_s [%sexp (output : Normalizer.Output.t)]
+;;
+
+let%expect_test "bad frames and events" =
+  let t = Normalizer.create () in
+  feed_result t "pong";
+  feed_result
+    t
+    {|{"event":"subscribe","arg":{"instType":"USDT-FUTURES","channel":"trade","instId":"BTCUSDT"}}|};
+  feed
+    t
+    {|{"event":"error","arg":{"instType":"USDT-FUTURES","channel":"books","instId":"NOPEUSDT"},"code":30001,"msg":"doesn't exist","op":"subscribe"}|};
+  feed_result t "garbage";
+  (* missing fields in a trade *)
+  feed_result
+    t
+    {|{"action":"update","arg":{"instType":"USDT-FUTURES","channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1","price":"1"}],"ts":1}|};
+  (* unparsable price *)
+  feed_result
+    t
+    {|{"action":"update","arg":{"instType":"USDT-FUTURES","channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1","price":"abc","size":"1","side":"buy","tradeId":"7"}],"ts":1}|};
+  (* unknown side *)
+  feed_result
+    t
+    {|{"action":"update","arg":{"instType":"USDT-FUTURES","channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1","price":"1","size":"1","side":"long","tradeId":"7"}],"ts":1}|};
+  (* channels this feed does not read are ignored *)
+  feed_result
+    t
+    {|{"action":"snapshot","arg":{"instType":"USDT-FUTURES","channel":"candle1m","instId":"BTCUSDT"},"data":[["1","2"]],"ts":1}|};
+  print_endline "-- a bad frame does not break the stream";
+  feed
+    t
+    {|{"action":"update","arg":{"instType":"USDT-FUTURES","channel":"trade","instId":"BTCUSDT"},"data":[{"ts":"1791808977646","price":"82776.4","size":"0.023","side":"sell","tradeId":"9"}],"ts":1791808977646}|};
+  [%expect
+    {|
+    ((events ()) (resubscribe ()))
+    ((events ()) (resubscribe ()))
+    (error
+     (error
+      ("bitget error event" (arg (USDT-FUTURES/books/NOPEUSDT)) (code (30001))
+       (msg ("doesn't exist")))))
+    error
+    error
+    error
+    error
+    ((events ()) (resubscribe ()))
+    -- a bad frame does not break the stream
+    (Trade
+     ((instrument bitget:BTCUSDT) (exch_ms 1791808977646) (price 82776.4)
+      (size 0.023) (side Sell) (trade_id 9)))
+    |}]
+;;
