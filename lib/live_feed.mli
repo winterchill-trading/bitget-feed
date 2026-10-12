@@ -22,15 +22,6 @@
 open! Core
 open Async
 
-(** Raises if a first connection fails, or if [streams] contains [Private]. *)
-val create
-  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
-  -> ?time_source:Time_source.t
-  -> Config.t
-  -> symbols:string list
-  -> streams:Market_data.Stream.t list
-  -> Market_data.Feed.t Deferred.t
-
 module Stats : sig
   type t =
     { frames : int (** text frames received, acks and pongs included *)
@@ -43,7 +34,34 @@ module Stats : sig
   [@@deriving sexp_of]
 end
 
-(** [create], also returning a function that reads the current counters. *)
+type t
+
+(** Raises if a first connection fails, or if [streams] contains [Private]. *)
+val connect
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> t Deferred.t
+
+val feed : t -> Market_data.Feed.t
+
+(** The same feed with its [gaps] pipe (see above). *)
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t
+
+val stats : t -> Stats.t
+
+(** [connect] then [feed]. *)
+val create
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> Market_data.Feed.t Deferred.t
+
+(** [connect], returning [feed] and a function that reads the current counters. *)
 val create_with_stats
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?time_source:Time_source.t

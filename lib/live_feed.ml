@@ -19,7 +19,21 @@ module Stats = struct
   [@@deriving sexp_of]
 end
 
-let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
+type t =
+  { feed : Md.Feed.With_gaps.t
+  ; stats : unit -> Stats.t
+  }
+
+let feed t = Md.Feed.With_gaps.to_feed t.feed
+let feed_with_gaps t = t.feed
+let stats t = t.stats ()
+
+let connect ?on_raw ?time_source config ~symbols ~streams =
+  let now () =
+    match time_source with
+    | None -> Time_ns.now ()
+    | Some time_source -> Time_source.now time_source
+  in
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then
@@ -28,6 +42,17 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
   let bbo_r, bbo_w = Pipe.create () in
   let l2_r, l2_w = Pipe.create () in
   let funding_r, funding_w = Pipe.create () in
+  let gaps_r, gaps_w = Pipe.create () in
+  let gap ~recv_ts ~stream ?instrument () =
+    Pipe.write_without_pushback_if_open
+      gaps_w
+      { Md.Gap.recv_ts
+      ; venue = Bitget
+      ; instrument
+      ; stream = Some stream
+      ; reason = Resync
+      }
+  in
   let emit : Md.Event.t -> unit = function
     | Trade x -> Pipe.write_without_pushback_if_open trades_w x
     | Bbo x -> Pipe.write_without_pushback_if_open bbo_w x
@@ -41,7 +66,19 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
   let connect stream =
     let args = List.map symbols ~f:(arg config stream) in
     let stream_name = Md.Stream.to_string stream in
+    (* Reconnects already reported as a gap. [on_connect] normally runs before any frame
+       of the new connection is handled, but whichever of the two sees a new reconnect
+       first reports it, so the gap always precedes the new connection's events. *)
+    let reported = ref 0 in
+    let report_reconnect ws =
+      let reconnects = Ws_client.reconnects ws in
+      if reconnects > !reported
+      then (
+        reported := reconnects;
+        gap ~recv_ts:(now ()) ~stream ())
+    in
     let on_connect ws =
+      report_reconnect ws;
       if Ws_client.reconnects ws > 0
       then Log.Global.info "bitget live feed: %s reconnected" stream_name;
       Ws_client.send ws (Wire.subscribe args)
@@ -61,11 +98,8 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
       Ws_client.send ws (Wire.subscribe [ arg ])
     in
     let handle frame =
-      let recv_ts =
-        match time_source with
-        | None -> Time_ns.now ()
-        | Some time_source -> Time_source.now time_source
-      in
+      report_reconnect ws;
+      let recv_ts = now () in
       incr frames;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       let output =
@@ -91,7 +125,9 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
               (error : Error.t)]
       | Ok { events; resubscribe = args } ->
         List.iter events ~f:emit;
-        List.iter args ~f:(fun arg -> don't_wait_for (resubscribe arg))
+        List.iter args ~f:(fun (arg : Wire.Arg.t) ->
+          gap ~recv_ts ~stream ~instrument:(Normalizer.instrument arg.inst_id) ();
+          don't_wait_for (resubscribe arg))
     in
     don't_wait_for (Pipe.iter_without_pushback (Ws_client.messages ws) ~f:handle);
     ws
@@ -116,7 +152,8 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
       Pipe.close trades_w;
       Pipe.close bbo_w;
       Pipe.close l2_w;
-      Pipe.close funding_w)
+      Pipe.close funding_w;
+      Pipe.close gaps_w)
   in
   let stats () : Stats.t =
     { frames = !frames
@@ -125,17 +162,24 @@ let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
     ; reconnects = List.sum (module Int) !opened ~f:Ws_client.reconnects
     }
   in
-  return
-    ( (module struct
-        let trades = trades_r
-        let bbo = bbo_r
-        let l2 = l2_r
-        let funding = funding_r
-        let close () = Lazy_deferred.force_exn closed
-      end : Md.Feed.S)
-    , stats )
+  let feed : Md.Feed.With_gaps.t =
+    (module struct
+      let trades = trades_r
+      let bbo = bbo_r
+      let l2 = l2_r
+      let funding = funding_r
+      let gaps = gaps_r
+      let close () = Lazy_deferred.force_exn closed
+    end)
+  in
+  return { feed; stats }
+;;
+
+let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
+  let%map t = connect ?on_raw ?time_source config ~symbols ~streams in
+  feed t, t.stats
 ;;
 
 let create ?on_raw ?time_source config ~symbols ~streams =
-  create_with_stats ?on_raw ?time_source config ~symbols ~streams >>| fst
+  connect ?on_raw ?time_source config ~symbols ~streams >>| feed
 ;;
