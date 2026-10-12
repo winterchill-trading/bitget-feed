@@ -11,10 +11,13 @@
     [Snapshot] after a reconnect. A book that loses sync is resubscribed (unsubscribe then
     subscribe).
 
-    [recv_ts] is [Time_ns.now ()] when the frame is read. [on_raw] gets that frame
-    unparsed, first, including acks and pongs. Undecodable frames and error events are
-    logged and skipped. Pipes of streams that were not requested stay empty until [close].
-    Writes do not wait for readers, so consumers should keep up. *)
+    [recv_ts] is the time of [time_source] (default the wall clock) when the frame is
+    read. [time_source] also drives the keepalive, the silence watchdog and the
+    reconnection delay of every connection (see {!Venue_net.Ws_client.connect}), so tests
+    can step them with a synthetic clock. [on_raw] gets that frame unparsed, first,
+    including acks and pongs. Undecodable frames and error events are logged and skipped.
+    Pipes of streams that were not requested stay empty until [close]. Writes do not wait
+    for readers, so consumers should keep up. *)
 
 open! Core
 open Async
@@ -22,6 +25,7 @@ open Async
 (** Raises if a first connection fails, or if [streams] contains [Private]. *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
@@ -42,6 +46,7 @@ end
 (** [create], also returning a function that reads the current counters. *)
 val create_with_stats
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list

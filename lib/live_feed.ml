@@ -19,7 +19,7 @@ module Stats = struct
   [@@deriving sexp_of]
 end
 
-let create_with_stats ?on_raw config ~symbols ~streams =
+let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then
@@ -51,6 +51,7 @@ let create_with_stats ?on_raw config ~symbols ~streams =
         ~ping
         ~on_connect
         ~log_name:("bitget " ^ stream_name)
+        ?time_source
         ~url:config.url
         ()
       >>| Or_error.ok_exn
@@ -60,7 +61,11 @@ let create_with_stats ?on_raw config ~symbols ~streams =
       Ws_client.send ws (Wire.subscribe [ arg ])
     in
     let handle frame =
-      let recv_ts = Time_ns.now () in
+      let recv_ts =
+        match time_source with
+        | None -> Time_ns.now ()
+        | Some time_source -> Time_source.now time_source
+      in
       incr frames;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       let output =
@@ -131,6 +136,6 @@ let create_with_stats ?on_raw config ~symbols ~streams =
     , stats )
 ;;
 
-let create ?on_raw config ~symbols ~streams =
-  create_with_stats ?on_raw config ~symbols ~streams >>| fst
+let create ?on_raw ?time_source config ~symbols ~streams =
+  create_with_stats ?on_raw ?time_source config ~symbols ~streams >>| fst
 ;;
