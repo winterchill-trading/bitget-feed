@@ -9,7 +9,17 @@ let arg (config : Config.t) stream symbol : Wire.Arg.t =
 
 let ping : Ws_client.Ping.t = `Text (Wire.ping, Time_ns.Span.of_int_sec 30)
 
-let create ?on_raw config ~symbols ~streams =
+module Stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; error_events : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of]
+end
+
+let create_with_stats ?on_raw config ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then
@@ -25,6 +35,9 @@ let create ?on_raw config ~symbols ~streams =
     | Funding x -> Pipe.write_without_pushback_if_open funding_w x
   in
   let normalizer = Normalizer.create () in
+  let frames = ref 0 in
+  let parse_errors = ref 0 in
+  let error_events = ref 0 in
   let connect stream =
     let args = List.map symbols ~f:(arg config stream) in
     let stream_name = Md.Stream.to_string stream in
@@ -48,8 +61,22 @@ let create ?on_raw config ~symbols ~streams =
     in
     let handle frame =
       let recv_ts = Time_ns.now () in
+      incr frames;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-      match Normalizer.frame normalizer ~recv_ts frame with
+      let output =
+        match Wire.decode frame with
+        | Error _ as error ->
+          incr parse_errors;
+          error
+        | Ok message ->
+          let output = Normalizer.message normalizer ~recv_ts message in
+          (match message, output with
+           | Event _, Error _ -> incr error_events
+           | _, Error _ -> incr parse_errors
+           | _, Ok _ -> ());
+          output
+      in
+      match output with
       | Error error ->
         Log.Global.error_s
           [%message
@@ -86,12 +113,24 @@ let create ?on_raw config ~symbols ~streams =
       Pipe.close l2_w;
       Pipe.close funding_w)
   in
+  let stats () : Stats.t =
+    { frames = !frames
+    ; parse_errors = !parse_errors
+    ; error_events = !error_events
+    ; reconnects = List.sum (module Int) !opened ~f:Ws_client.reconnects
+    }
+  in
   return
-    (module struct
-      let trades = trades_r
-      let bbo = bbo_r
-      let l2 = l2_r
-      let funding = funding_r
-      let close () = Lazy_deferred.force_exn closed
-    end : Md.Feed.S)
+    ( (module struct
+        let trades = trades_r
+        let bbo = bbo_r
+        let l2 = l2_r
+        let funding = funding_r
+        let close () = Lazy_deferred.force_exn closed
+      end : Md.Feed.S)
+    , stats )
+;;
+
+let create ?on_raw config ~symbols ~streams =
+  create_with_stats ?on_raw config ~symbols ~streams >>| fst
 ;;

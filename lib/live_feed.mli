@@ -27,5 +27,25 @@ val create
   -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
 
+module Stats : sig
+  type t =
+    { frames : int (** text frames received, acks and pongs included *)
+    ; parse_errors : int
+    (** frames that did not decode or normalize (bad JSON, unknown shape, bad numbers) and
+        were dropped *)
+    ; error_events : int (** [{"event": "error"}] responses from the server *)
+    ; reconnects : int (** successful reconnections, summed over the connections *)
+    }
+  [@@deriving sexp_of]
+end
+
+(** [create], also returning a function that reads the current counters. *)
+val create_with_stats
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> (Market_data.Feed.t * (unit -> Stats.t)) Deferred.t
+
 (** The subscription for a stream and symbol. *)
 val arg : Config.t -> Market_data.Stream.t -> string -> Wire.Arg.t
