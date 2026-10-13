@@ -1,6 +1,13 @@
-(executable
- (name main)
- (libraries core core_unix.command_unix core_bench bitget-feed)
+(executables
+ (names main live)
+ (libraries
+  core
+  core_unix.command_unix
+  core_bench
+  async
+  market-data
+  bitget-feed
+  bitget_feed_test)
  (preprocess
   (pps ppx_jane)))
 
