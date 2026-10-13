@@ -23,6 +23,8 @@ let words f =
   Gc.minor_words () - before
 ;;
 
+(* Pinned counts. macOS and Linux differ by a few words; [Helpers.approx] allows 10 words
+   or 0.2%, whichever is larger. *)
 let expected : Md.Stream.t -> int = function
   | Trades -> 751
   | Bbo -> 565
