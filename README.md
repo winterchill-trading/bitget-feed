@@ -144,7 +144,34 @@ synthetic clock (reconnect backoff, and gaps on a resync and a reconnect).
 | funding | 60 | 581 | 5.4 us | 776 |
 
 The l2 cycle includes the 20 KB full-depth snapshot sent on subscribe, which dominates
-its average.
+its average. Times and words are from before fixed-decimal parsed prices and sizes in
+place; `test/test_allocation.ml` now pins trades 681, bbo 514 and l2 10598 words per frame
+(the same on macOS and Linux).
+
+### Websocket delivery
+
+`Live_feed` takes frames from `Venue_net.Ws_client` through `on_message`, so each frame
+goes from the connection's frame pipe straight to the decoder. Before, it read
+`Ws_client.messages` one frame at a time with `Pipe.iter_without_pushback`, which costs
+about 13 words per frame for the hop (see venue-net's README); that path is kept as
+`Live_feed.For_testing.connect_via_messages`.
+
+`dune exec bench/live.exe` writes the recorded trades frames 100 times (15,000 frames) as
+pre-encoded websocket frames from the in-process loopback server in one burst, and counts
+minor words over the whole receive phase (socket reads, framing, delivery, decoding,
+pipe writes). arm64, best of 10 runs:
+
+| Build | messages pipe (before) | `on_message` |
+| --- | --- | --- |
+| dev | 4.39 to 4.43 us, 754.3 words | 4.41 to 4.42 us, 741.2 words |
+| release | 4.38 to 4.44 us, 754.3 words | 4.38 to 4.42 us, 741.2 words |
+| release, `OCAMLPARAM='_,O3=1'` | 4.40 us, 746.3 words | 4.39 us, 733.2 words |
+
+The JSON decode dominates, so the time difference is inside the noise; the 13 words per
+frame are exact. `test/test_delivery.ml` runs both deliveries over every recorded stream
+and requires identical events, gaps and stats (gap ordering is covered by the
+`Live_feed` tests, which now run on `on_message`), and pins the words per trades frame end
+to end (dev profile: about 824 before, 811 now; a few words of slack for Linux CI).
 
 ## Symbol conventions
 
