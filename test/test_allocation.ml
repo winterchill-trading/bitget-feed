@@ -25,10 +25,12 @@ let words f =
 
 (* Pinned counts. macOS and Linux differ by a few words; [Helpers.approx] allows 10 words
    or 0.2%, whichever is larger. *)
+(* Repinned 2026-10-13 from 751/565/15447, with no change in this repo: fixed-decimal now
+   parses prices and sizes in place. Identical on macOS and Linux CI. *)
 let expected : Md.Stream.t -> int = function
-  | Trades -> 751
-  | Bbo -> 565
-  | L2 -> 15447
+  | Trades -> 681
+  | Bbo -> 514
+  | L2 -> 10598
   | Funding -> 776
   | Private -> 0
 ;;
@@ -58,10 +60,10 @@ let%expect_test "minor words per Live_feed message" =
           ~bytes_per_frame:(bytes / n : int)]);
   [%expect
     {|
-    ((stream Trades) (frames 150) (words_per_frame 751+-10)
+    ((stream Trades) (frames 150) (words_per_frame 681+-10)
      (bytes_per_frame 383))
-    ((stream Bbo) (frames 200) (words_per_frame 565+-10) (bytes_per_frame 230))
-    ((stream L2) (frames 40) (words_per_frame 15447+-30) (bytes_per_frame 2022))
+    ((stream Bbo) (frames 200) (words_per_frame 514+-10) (bytes_per_frame 230))
+    ((stream L2) (frames 40) (words_per_frame 10598+-21) (bytes_per_frame 2022))
     ((stream Funding) (frames 60) (words_per_frame 776+-10)
      (bytes_per_frame 581))
     |}]
