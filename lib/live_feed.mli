@@ -45,6 +45,19 @@ val connect
   -> streams:Market_data.Stream.t list
   -> t Deferred.t
 
+module For_testing : sig
+  (** {!connect} with the delivery used before [on_message]: frames are read from
+      {!Venue_net.Ws_client.messages} one at a time. The reference for tests and the
+      bench. *)
+  val connect_via_messages
+    :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+    -> ?time_source:Time_source.t
+    -> Config.t
+    -> symbols:string list
+    -> streams:Market_data.Stream.t list
+    -> t Deferred.t
+end
+
 val feed : t -> Market_data.Feed.t
 
 (** The same feed with its [gaps] pipe (see above). *)

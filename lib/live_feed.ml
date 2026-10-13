@@ -28,7 +28,7 @@ let feed t = Md.Feed.With_gaps.to_feed t.feed
 let feed_with_gaps t = t.feed
 let stats t = t.stats ()
 
-let connect ?on_raw ?time_source config ~symbols ~streams =
+let connect_with ~via_messages ?on_raw ?time_source config ~symbols ~streams =
   let now () =
     match time_source with
     | None -> Time_ns.now ()
@@ -77,59 +77,71 @@ let connect ?on_raw ?time_source config ~symbols ~streams =
         reported := reconnects;
         gap ~recv_ts:(now ()) ~stream ())
     in
+    (* The client frames arrive on, set by [on_connect], which runs before the first frame
+       of every connection. *)
+    let current = ref None in
     let on_connect ws =
+      current := Some ws;
       report_reconnect ws;
       if Ws_client.reconnects ws > 0
       then Log.Global.info "bitget live feed: %s reconnected" stream_name;
       Ws_client.send ws (Wire.subscribe args)
     in
+    let resubscribe ws arg =
+      let%bind () = Ws_client.send ws (Wire.unsubscribe [ arg ]) in
+      Ws_client.send ws (Wire.subscribe [ arg ])
+    in
+    let handle frame =
+      match !current with
+      | None -> ()
+      | Some ws ->
+        report_reconnect ws;
+        let recv_ts = now () in
+        incr frames;
+        Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
+        let output =
+          match Wire.decode frame with
+          | Error _ as error ->
+            incr parse_errors;
+            error
+          | Ok message ->
+            let output = Normalizer.message normalizer ~recv_ts message in
+            (match message, output with
+             | Event _, Error _ -> incr error_events
+             | _, Error _ -> incr parse_errors
+             | _, Ok _ -> ());
+            output
+        in
+        (match output with
+         | Error error ->
+           Log.Global.error_s
+             [%message
+               "bitget live feed: skipped frame"
+                 ~stream:stream_name
+                 ~frame:(String.prefix frame 500 : string)
+                 (error : Error.t)]
+         | Ok { events; resubscribe = args } ->
+           List.iter events ~f:emit;
+           List.iter args ~f:(fun (arg : Wire.Arg.t) ->
+             gap ~recv_ts ~stream ~instrument:(Normalizer.instrument arg.inst_id) ();
+             don't_wait_for (resubscribe ws arg)))
+    in
+    (* [on_message] hands each frame over with no pipe in between; reading [messages] one
+       frame at a time cost about 13 words per frame more (see venue-net's README). The
+       pipe path is kept for [For_testing.connect_via_messages]. *)
     let%map ws =
       Ws_client.connect
         ~ping
         ~on_connect
+        ?on_message:(if via_messages then None else Some handle)
         ~log_name:("bitget " ^ stream_name)
         ?time_source
         ~url:config.url
         ()
       >>| Or_error.ok_exn
     in
-    let resubscribe arg =
-      let%bind () = Ws_client.send ws (Wire.unsubscribe [ arg ]) in
-      Ws_client.send ws (Wire.subscribe [ arg ])
-    in
-    let handle frame =
-      report_reconnect ws;
-      let recv_ts = now () in
-      incr frames;
-      Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-      let output =
-        match Wire.decode frame with
-        | Error _ as error ->
-          incr parse_errors;
-          error
-        | Ok message ->
-          let output = Normalizer.message normalizer ~recv_ts message in
-          (match message, output with
-           | Event _, Error _ -> incr error_events
-           | _, Error _ -> incr parse_errors
-           | _, Ok _ -> ());
-          output
-      in
-      match output with
-      | Error error ->
-        Log.Global.error_s
-          [%message
-            "bitget live feed: skipped frame"
-              ~stream:stream_name
-              ~frame:(String.prefix frame 500 : string)
-              (error : Error.t)]
-      | Ok { events; resubscribe = args } ->
-        List.iter events ~f:emit;
-        List.iter args ~f:(fun (arg : Wire.Arg.t) ->
-          gap ~recv_ts ~stream ~instrument:(Normalizer.instrument arg.inst_id) ();
-          don't_wait_for (resubscribe arg))
-    in
-    don't_wait_for (Pipe.iter_without_pushback (Ws_client.messages ws) ~f:handle);
+    if via_messages
+    then don't_wait_for (Pipe.iter_without_pushback (Ws_client.messages ws) ~f:handle);
     ws
   in
   let opened = ref [] in
@@ -174,6 +186,12 @@ let connect ?on_raw ?time_source config ~symbols ~streams =
   in
   return { feed; stats }
 ;;
+
+let connect = connect_with ~via_messages:false
+
+module For_testing = struct
+  let connect_via_messages = connect_with ~via_messages:true
+end
 
 let create_with_stats ?on_raw ?time_source config ~symbols ~streams =
   let%map t = connect ?on_raw ?time_source config ~symbols ~streams in
